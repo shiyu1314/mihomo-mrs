@@ -1,0 +1,80 @@
+name: mrs of mihomo
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: 0 21 * * *
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "**/README.md"
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set variables
+        run: |
+          sudo timedatectl set-timezone 'Asia/Shanghai'
+          echo "RELEASE_NAME=Released on $(date +%Y%m%d%H%M)" >> $GITHUB_ENV
+          echo "TAG_NAME=$(date +%Y%m%d%H%M)" >> $GITHUB_ENV
+          echo "private=https://raw.githubusercontent.com/Loyalsoldier/domain-list-custom/release/private.txt" >> $GITHUB_ENV
+          echo "ads=https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt" >> $GITHUB_ENV
+          echo "proxy=https://raw.githubusercontent.com/Loyalsoldier/v2ray-rules-dat/release/proxy-list.txt" >> $GITHUB_ENV
+          echo "proxy_ip=https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Global/Global.yaml" >> $GITHUB_ENV
+          echo "cn=https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/ChinaMax/ChinaMax_Domain.yaml" >> $GITHUB_ENV
+          echo "cn_ip=https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/ChinaMax/ChinaMax_IP.yaml" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download and install Mihomo
+        run: |
+          curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases \
+            | grep "browser_download_url.*mihomo-linux-amd64-alpha.*.deb" \
+            | head -n 1 \
+            | cut -d '"' -f 4 \
+            | xargs wget -q -O mihomo-linux-amd64-alpha.deb
+          sudo apt install --fix-missing ./mihomo-linux-amd64-alpha.deb
+        shell: bash
+
+      - name: Generate
+        run: |
+          curl -sSL ${private} | awk -F ':' '/^full:/ {printf "  - |%s|\n", $2}' | sed "s/|/'/g" >> private.txt
+          curl -sSL ${private} | awk -F ':' '/^domain:/ {printf "  - |+.%s|\n", $2}' | sed "s/|/'/g" >> private.txt
+          curl -sSL ${cn} | grep -v '#' >> cn.txt
+          curl -sSL ${proxy} | grep -Ev "^(regexp|keyword):" | perl -ne '/^(full:)([-_a-zA-Z0-9]+(\.[-_a-zA-Z0-9]+)*)/ && print "  - |$2|\n"' | sed "s/|/'/g" >> proxy.txt
+          curl -sSL ${proxy} | grep -Ev "^(regexp|keyword|full):" | perl -ne '/^(domain:)?([-_a-zA-Z0-9]+(\.[-_a-zA-Z0-9]+)*)/ && print "  - |+.$2|\n"' | sed "s/|/'/g" >> proxy.txt
+          curl -sSL ${ads} | grep -E "^\|\|([a-zA-Z0-9.-]+\.[a-zA-Z]+)\^$" | sed "s/||/- '+./; s/\^$/'/" >> ads.txt
+          curl -sSL ${cn_ip} | grep -v '#' >> cnip.txt
+          curl -sSL ${proxy_ip} | \
+          grep -v '#' | \
+          grep -v 'DOMAIN-KEYWORD' | \
+          grep -v ' IP-CIDR6' | \
+          grep -v 'PROCESS-NAME' | \
+          sed "s/^\s*- \s*IP-CIDR,/ - '/;s/$/'/" >> proxyip.txt
+
+      - name: mrs script
+        run: |
+          chmod +x ./mrs_rules.sh
+          ./mrs_rules.sh
+
+      - name: Push all generated files to the publish directory
+        run: |
+          mkdir -p publish
+          mv *.mrs publish/
+
+
+      - name: "mrs and push"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd publish
+          git init
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "${{ env.RELEASE_NAME }}"
+          git branch -M mrs
+          git remote add origin https://github-action:$GITHUB_TOKEN@github.com/shiyu1314/mihomo-mrs.git
+          git push -u origin mrs --force
